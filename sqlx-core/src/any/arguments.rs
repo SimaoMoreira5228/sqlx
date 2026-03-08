@@ -36,6 +36,73 @@ impl Arguments for AnyArguments {
 pub struct AnyArgumentBuffer(#[doc(hidden)] pub Vec<AnyValueKind>);
 
 impl AnyArguments {
+    #[cfg(feature = "uuid")]
+    #[doc(hidden)]
+    pub fn convert_into<'a, A: Arguments>(self) -> Result<A, BoxDynError>
+    where
+        Option<i32>: Type<A::Database> + Encode<'a, A::Database>,
+        Option<bool>: Type<A::Database> + Encode<'a, A::Database>,
+        Option<i16>: Type<A::Database> + Encode<'a, A::Database>,
+        Option<i32>: Type<A::Database> + Encode<'a, A::Database>,
+        Option<i64>: Type<A::Database> + Encode<'a, A::Database>,
+        Option<f32>: Type<A::Database> + Encode<'a, A::Database>,
+        Option<f64>: Type<A::Database> + Encode<'a, A::Database>,
+        Option<String>: Type<A::Database> + Encode<'a, A::Database>,
+        Option<Vec<u8>>: Type<A::Database> + Encode<'a, A::Database>,
+        bool: Type<A::Database> + Encode<'a, A::Database>,
+        i16: Type<A::Database> + Encode<'a, A::Database>,
+        i32: Type<A::Database> + Encode<'a, A::Database>,
+        i64: Type<A::Database> + Encode<'a, A::Database>,
+        f32: Type<A::Database> + Encode<'a, A::Database>,
+        f64: Type<A::Database> + Encode<'a, A::Database>,
+        Arc<String>: Type<A::Database> + Encode<'a, A::Database>,
+        Arc<str>: Type<A::Database> + Encode<'a, A::Database>,
+        Arc<Vec<u8>>: Type<A::Database> + Encode<'a, A::Database>,
+        uuid::Uuid: Type<A::Database> + Encode<'a, A::Database>,
+    {
+        let mut out = A::default();
+
+        for arg in self.values.0 {
+            match arg {
+                AnyValueKind::Null(AnyTypeInfoKind::Null) => out.add(Option::<i32>::None),
+                AnyValueKind::Null(AnyTypeInfoKind::Bool) => out.add(Option::<bool>::None),
+                AnyValueKind::Null(AnyTypeInfoKind::SmallInt) => out.add(Option::<i16>::None),
+                AnyValueKind::Null(AnyTypeInfoKind::Integer) => out.add(Option::<i32>::None),
+                AnyValueKind::Null(AnyTypeInfoKind::BigInt) => out.add(Option::<i64>::None),
+                AnyValueKind::Null(AnyTypeInfoKind::Real) => out.add(Option::<f64>::None),
+                AnyValueKind::Null(AnyTypeInfoKind::Double) => out.add(Option::<f32>::None),
+                AnyValueKind::Null(AnyTypeInfoKind::Text) => out.add(Option::<String>::None),
+                AnyValueKind::Null(AnyTypeInfoKind::Blob) => out.add(Option::<Vec<u8>>::None),
+                AnyValueKind::Bool(b) => out.add(b),
+                AnyValueKind::SmallInt(i) => out.add(i),
+                AnyValueKind::Integer(i) => out.add(i),
+                AnyValueKind::BigInt(i) => out.add(i),
+                AnyValueKind::Real(r) => out.add(r),
+                AnyValueKind::Double(d) => out.add(d),
+                AnyValueKind::Text(t) => out.add(t),
+                AnyValueKind::TextSlice(t) => out.add(t),
+                AnyValueKind::Blob(b) => out.add(b),
+                AnyValueKind::Uuid(bytes) => out.add(uuid::Uuid::from_bytes(bytes)),
+                #[cfg(feature = "chrono")]
+                AnyValueKind::TimestampTz(micros) => {
+                    let s = chrono::DateTime::<chrono::Utc>::from_timestamp_micros(micros)
+                        .map(|dt| dt.to_rfc3339())
+                        .unwrap_or_default();
+                    out.add(Arc::new(s))
+                }
+                #[cfg(feature = "json")]
+                AnyValueKind::Json(json_str) => out.add(json_str),
+                AnyValueKind::Null(AnyTypeInfoKind::Uuid) => out.add(Option::<Vec<u8>>::None),
+                #[cfg(feature = "chrono")]
+                AnyValueKind::Null(AnyTypeInfoKind::TimestampTz) => out.add(Option::<String>::None),
+                #[cfg(feature = "json")]
+                AnyValueKind::Null(AnyTypeInfoKind::Json) => out.add(Option::<String>::None),
+            }?
+        }
+        Ok(out)
+    }
+
+    #[cfg(not(feature = "uuid"))]
     #[doc(hidden)]
     pub fn convert_into<'a, A: Arguments>(self) -> Result<A, BoxDynError>
     where
@@ -80,6 +147,19 @@ impl AnyArguments {
                 AnyValueKind::Text(t) => out.add(t),
                 AnyValueKind::TextSlice(t) => out.add(t),
                 AnyValueKind::Blob(b) => out.add(b),
+                #[cfg(feature = "chrono")]
+                AnyValueKind::TimestampTz(micros) => {
+                    let s = chrono::DateTime::<chrono::Utc>::from_timestamp_micros(micros)
+                        .map(|dt| dt.to_rfc3339())
+                        .unwrap_or_default();
+                    out.add(Arc::new(s))
+                }
+                #[cfg(feature = "json")]
+                AnyValueKind::Json(json_str) => out.add(json_str),
+                #[cfg(feature = "chrono")]
+                AnyValueKind::Null(AnyTypeInfoKind::TimestampTz) => out.add(Option::<String>::None),
+                #[cfg(feature = "json")]
+                AnyValueKind::Null(AnyTypeInfoKind::Json) => out.add(Option::<String>::None),
             }?
         }
         Ok(out)

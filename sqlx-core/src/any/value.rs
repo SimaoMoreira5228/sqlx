@@ -19,6 +19,12 @@ pub enum AnyValueKind {
     Text(Arc<String>),
     TextSlice(Arc<str>),
     Blob(Arc<Vec<u8>>),
+    #[cfg(feature = "uuid")]
+    Uuid([u8; 16]),
+    #[cfg(feature = "chrono")]
+    TimestampTz(i64),
+    #[cfg(feature = "json")]
+    Json(Arc<String>),
 }
 
 impl AnyValueKind {
@@ -35,6 +41,12 @@ impl AnyValueKind {
                 AnyValueKind::Text(_) => AnyTypeInfoKind::Text,
                 AnyValueKind::TextSlice(_) => AnyTypeInfoKind::Text,
                 AnyValueKind::Blob(_) => AnyTypeInfoKind::Blob,
+                #[cfg(feature = "uuid")]
+                AnyValueKind::Uuid(_) => AnyTypeInfoKind::Uuid,
+                #[cfg(feature = "chrono")]
+                AnyValueKind::TimestampTz(_) => AnyTypeInfoKind::TimestampTz,
+                #[cfg(feature = "json")]
+                AnyValueKind::Json(_) => AnyTypeInfoKind::Json,
             },
         }
     }

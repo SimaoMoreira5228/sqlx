@@ -4,8 +4,20 @@ use crate::decode::Decode;
 use crate::encode::{Encode, IsNull};
 use crate::error::BoxDynError;
 use crate::types::Type;
-use chrono::{DateTime, FixedOffset, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDate, NaiveDateTime, NaiveTime, Offset, TimeZone, Utc};
 use std::sync::Arc;
+
+fn decode_pg_timestamp_binary(bytes: &[u8]) -> Result<NaiveDateTime, BoxDynError> {
+    if bytes.len() != 8 {
+        return Err(format!("expected 8 bytes for timestamp, got {}", bytes.len()).into());
+    }
+    let micros = i64::from_be_bytes(bytes.try_into()?);
+    let epoch = NaiveDate::from_ymd_opt(2000, 1, 1)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+    Ok(epoch + Duration::microseconds(micros))
+}
 
 impl Type<Any> for NaiveDate {
     fn type_info() -> AnyTypeInfo {
@@ -69,6 +81,10 @@ impl Type<Any> for NaiveDateTime {
             kind: AnyTypeInfoKind::Text,
         }
     }
+
+    fn compatible(ty: &AnyTypeInfo) -> bool {
+        matches!(ty.kind, AnyTypeInfoKind::Text | AnyTypeInfoKind::Blob)
+    }
 }
 
 impl Encode<'_, Any> for NaiveDateTime {
@@ -86,6 +102,7 @@ impl<'r> Decode<'r, Any> for NaiveDateTime {
     fn decode(value: <Any as Database>::ValueRef<'r>) -> Result<Self, BoxDynError> {
         match value.kind {
             AnyValueKind::Text(text) => text.parse().map_err(Into::into),
+            AnyValueKind::Blob(bytes) => decode_pg_timestamp_binary(&bytes),
             other => other.unexpected(),
         }
     }
@@ -94,8 +111,12 @@ impl<'r> Decode<'r, Any> for NaiveDateTime {
 impl Type<Any> for DateTime<Utc> {
     fn type_info() -> AnyTypeInfo {
         AnyTypeInfo {
-            kind: AnyTypeInfoKind::Text,
+            kind: AnyTypeInfoKind::TimestampTz,
         }
+    }
+
+    fn compatible(ty: &AnyTypeInfo) -> bool {
+        matches!(ty.kind, AnyTypeInfoKind::TimestampTz | AnyTypeInfoKind::Text | AnyTypeInfoKind::Blob)
     }
 }
 
@@ -104,8 +125,7 @@ impl Encode<'_, Any> for DateTime<Utc> {
         &self,
         buf: &mut <Any as Database>::ArgumentBuffer,
     ) -> Result<IsNull, BoxDynError> {
-        buf.0
-            .push(AnyValueKind::Text(Arc::new(self.to_rfc3339())));
+        buf.0.push(AnyValueKind::TimestampTz(self.timestamp_micros()));
         Ok(IsNull::No)
     }
 }
@@ -113,6 +133,10 @@ impl Encode<'_, Any> for DateTime<Utc> {
 impl<'r> Decode<'r, Any> for DateTime<Utc> {
     fn decode(value: <Any as Database>::ValueRef<'r>) -> Result<Self, BoxDynError> {
         match value.kind {
+            AnyValueKind::TimestampTz(micros) => {
+                DateTime::<Utc>::from_timestamp_micros(*micros)
+                    .ok_or_else(|| format!("timestamp out of range: {micros}").into())
+            }
             AnyValueKind::Text(text) => {
                 if let Ok(dt) = DateTime::parse_from_rfc3339(text) {
                     Ok(dt.with_timezone(&Utc))
@@ -120,6 +144,10 @@ impl<'r> Decode<'r, Any> for DateTime<Utc> {
                     let ndt: NaiveDateTime = text.parse()?;
                     Ok(DateTime::<Utc>::from_naive_utc_and_offset(ndt, Utc))
                 }
+            }
+            AnyValueKind::Blob(bytes) => {
+                let ndt = decode_pg_timestamp_binary(&bytes)?;
+                Ok(Utc.from_utc_datetime(&ndt))
             }
             other => other.unexpected(),
         }
@@ -129,8 +157,12 @@ impl<'r> Decode<'r, Any> for DateTime<Utc> {
 impl Type<Any> for DateTime<Local> {
     fn type_info() -> AnyTypeInfo {
         AnyTypeInfo {
-            kind: AnyTypeInfoKind::Text,
+            kind: AnyTypeInfoKind::TimestampTz,
         }
+    }
+
+    fn compatible(ty: &AnyTypeInfo) -> bool {
+        matches!(ty.kind, AnyTypeInfoKind::TimestampTz | AnyTypeInfoKind::Text | AnyTypeInfoKind::Blob)
     }
 }
 
@@ -139,8 +171,7 @@ impl Encode<'_, Any> for DateTime<Local> {
         &self,
         buf: &mut <Any as Database>::ArgumentBuffer,
     ) -> Result<IsNull, BoxDynError> {
-        buf.0
-            .push(AnyValueKind::Text(Arc::new(self.to_rfc3339())));
+        buf.0.push(AnyValueKind::TimestampTz(self.with_timezone(&Utc).timestamp_micros()));
         Ok(IsNull::No)
     }
 }
@@ -148,6 +179,11 @@ impl Encode<'_, Any> for DateTime<Local> {
 impl<'r> Decode<'r, Any> for DateTime<Local> {
     fn decode(value: <Any as Database>::ValueRef<'r>) -> Result<Self, BoxDynError> {
         match value.kind {
+            AnyValueKind::TimestampTz(micros) => {
+                DateTime::<Utc>::from_timestamp_micros(*micros)
+                    .map(|dt| dt.with_timezone(&Local))
+                    .ok_or_else(|| format!("timestamp out of range: {micros}").into())
+            }
             AnyValueKind::Text(text) => {
                 if let Ok(dt) = DateTime::parse_from_rfc3339(text) {
                     Ok(dt.with_timezone(&Local))
@@ -155,6 +191,10 @@ impl<'r> Decode<'r, Any> for DateTime<Local> {
                     let ndt: NaiveDateTime = text.parse()?;
                     Ok(Local.from_utc_datetime(&ndt))
                 }
+            }
+            AnyValueKind::Blob(bytes) => {
+                let ndt = decode_pg_timestamp_binary(&bytes)?;
+                Ok(Local.from_utc_datetime(&ndt))
             }
             other => other.unexpected(),
         }
@@ -164,8 +204,12 @@ impl<'r> Decode<'r, Any> for DateTime<Local> {
 impl Type<Any> for DateTime<FixedOffset> {
     fn type_info() -> AnyTypeInfo {
         AnyTypeInfo {
-            kind: AnyTypeInfoKind::Text,
+            kind: AnyTypeInfoKind::TimestampTz,
         }
+    }
+
+    fn compatible(ty: &AnyTypeInfo) -> bool {
+        matches!(ty.kind, AnyTypeInfoKind::TimestampTz | AnyTypeInfoKind::Text | AnyTypeInfoKind::Blob)
     }
 }
 
@@ -174,8 +218,7 @@ impl Encode<'_, Any> for DateTime<FixedOffset> {
         &self,
         buf: &mut <Any as Database>::ArgumentBuffer,
     ) -> Result<IsNull, BoxDynError> {
-        buf.0
-            .push(AnyValueKind::Text(Arc::new(self.to_rfc3339())));
+        buf.0.push(AnyValueKind::TimestampTz(self.with_timezone(&Utc).timestamp_micros()));
         Ok(IsNull::No)
     }
 }
@@ -183,8 +226,17 @@ impl Encode<'_, Any> for DateTime<FixedOffset> {
 impl<'r> Decode<'r, Any> for DateTime<FixedOffset> {
     fn decode(value: <Any as Database>::ValueRef<'r>) -> Result<Self, BoxDynError> {
         match value.kind {
+            AnyValueKind::TimestampTz(micros) => {
+                DateTime::<Utc>::from_timestamp_micros(*micros)
+                    .map(|dt| dt.with_timezone(&FixedOffset::east_opt(0).unwrap()))
+                    .ok_or_else(|| format!("timestamp out of range: {micros}").into())
+            }
             AnyValueKind::Text(text) => {
                 DateTime::parse_from_rfc3339(text).map_err(Into::into)
+            }
+            AnyValueKind::Blob(bytes) => {
+                let ndt = decode_pg_timestamp_binary(&bytes)?;
+                Ok(Utc.fix().from_utc_datetime(&ndt))
             }
             other => other.unexpected(),
         }

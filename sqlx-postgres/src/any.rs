@@ -10,7 +10,7 @@ use std::{future, pin::pin};
 
 use sqlx_core::any::{
     AnyArguments, AnyColumn, AnyConnectOptions, AnyConnectionBackend, AnyQueryResult, AnyRow,
-    AnyStatement, AnyTypeInfo, AnyTypeInfoKind,
+    AnyStatement, AnyTypeInfo, AnyTypeInfoKind, AnyValueKind,
 };
 
 use crate::type_info::PgType;
@@ -51,6 +51,54 @@ fn rewrite_placeholders(sql: &str) -> SqlStr {
 }
 
 sqlx_core::declare_driver_with_optional_migrate!(DRIVER = Postgres);
+
+fn pg_convert_any(args: AnyArguments) -> Result<crate::PgArguments, sqlx_core::error::BoxDynError> {
+    let mut out = crate::PgArguments::default();
+    for arg in args.values.0 {
+        match arg {
+            AnyValueKind::Null(AnyTypeInfoKind::Null) => out.add(Option::<i32>::None),
+            AnyValueKind::Null(AnyTypeInfoKind::Bool) => out.add(Option::<bool>::None),
+            AnyValueKind::Null(AnyTypeInfoKind::SmallInt) => out.add(Option::<i16>::None),
+            AnyValueKind::Null(AnyTypeInfoKind::Integer) => out.add(Option::<i32>::None),
+            AnyValueKind::Null(AnyTypeInfoKind::BigInt) => out.add(Option::<i64>::None),
+            AnyValueKind::Null(AnyTypeInfoKind::Real) => out.add(Option::<f64>::None),
+            AnyValueKind::Null(AnyTypeInfoKind::Double) => out.add(Option::<f32>::None),
+            AnyValueKind::Null(AnyTypeInfoKind::Text) => out.add(Option::<String>::None),
+            AnyValueKind::Null(AnyTypeInfoKind::Blob) => out.add(Option::<Vec<u8>>::None),
+            #[cfg(feature = "uuid")]
+            AnyValueKind::Null(AnyTypeInfoKind::Uuid) => out.add(Option::<uuid::Uuid>::None),
+            #[cfg(feature = "chrono")]
+            AnyValueKind::Null(AnyTypeInfoKind::TimestampTz) => out.add(Option::<chrono::DateTime<chrono::Utc>>::None),
+            #[cfg(feature = "json")]
+            AnyValueKind::Null(AnyTypeInfoKind::Json) => out.add(Option::<sqlx_core::types::Json<serde_json::Value>>::None),
+            AnyValueKind::Bool(b) => out.add(b),
+            AnyValueKind::SmallInt(i) => out.add(i),
+            AnyValueKind::Integer(i) => out.add(i),
+            AnyValueKind::BigInt(i) => out.add(i),
+            AnyValueKind::Real(r) => out.add(r),
+            AnyValueKind::Double(d) => out.add(d),
+            AnyValueKind::Text(t) => out.add(t),
+            AnyValueKind::TextSlice(t) => out.add(t),
+            AnyValueKind::Blob(b) => out.add(b),
+            #[cfg(feature = "uuid")]
+            AnyValueKind::Uuid(bytes) => out.add(uuid::Uuid::from_bytes(bytes)),
+            #[cfg(feature = "chrono")]
+            AnyValueKind::TimestampTz(micros) => {
+                let dt = chrono::DateTime::<chrono::Utc>::from_timestamp_micros(micros)
+                    .ok_or_else(|| format!("timestamp out of range: {micros}"))?;
+                out.add(dt)
+            }
+            #[cfg(feature = "json")]
+            AnyValueKind::Json(json_str) => {
+                let val: serde_json::Value = serde_json::from_str(&json_str)
+                    .map_err(|e| format!("invalid JSON for Postgres: {e}"))?;
+                out.add(sqlx_core::types::Json(val))
+            }
+            _ => return Err(format!("unsupported AnyValueKind variant for Postgres").into()),
+        }?
+    }
+    Ok(out)
+}
 
 impl AnyConnectionBackend for PgConnection {
     fn name(&self) -> &str {
@@ -115,7 +163,7 @@ impl AnyConnectionBackend for PgConnection {
         arguments: Option<AnyArguments>,
     ) -> BoxStream<sqlx_core::Result<Either<AnyQueryResult, AnyRow>>> {
         let persistent = persistent && arguments.is_some();
-        let arguments = match arguments.map(AnyArguments::convert_into).transpose() {
+        let arguments = match arguments.map(pg_convert_any).transpose() {
             Ok(arguments) => arguments,
             Err(error) => {
                 return stream::once(future::ready(Err(sqlx_core::Error::Encode(error)))).boxed()
@@ -143,7 +191,7 @@ impl AnyConnectionBackend for PgConnection {
     ) -> BoxFuture<sqlx_core::Result<Option<AnyRow>>> {
         let persistent = persistent && arguments.is_some();
         let arguments = arguments
-            .map(AnyArguments::convert_into)
+            .map(pg_convert_any)
             .transpose()
             .map_err(sqlx_core::Error::Encode);
 
@@ -233,6 +281,9 @@ impl<'a> TryFrom<&'a PgTypeInfo> for AnyTypeInfo {
                 PgType::Bytea => AnyTypeInfoKind::Blob,
                 PgType::Text | PgType::Varchar => AnyTypeInfoKind::Text,
                 PgType::DeclareWithName(UStr::Static("citext")) => AnyTypeInfoKind::Text,
+                PgType::Uuid => AnyTypeInfoKind::Uuid,
+                PgType::Timestamp | PgType::Timestamptz => AnyTypeInfoKind::TimestampTz,
+                PgType::Json | PgType::Jsonb => AnyTypeInfoKind::Json,
                 _ => {
                     return Err(sqlx_core::Error::AnyDriverError(
                         format!("Any driver does not support the Postgres type {pg_type:?}").into(),

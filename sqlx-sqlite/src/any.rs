@@ -223,7 +223,19 @@ fn map_arguments(args: AnyArguments) -> SqliteArguments {
             AnyValueKind::Real(r) => SqliteArgumentValue::Double(r as f64),
             AnyValueKind::Double(d) => SqliteArgumentValue::Double(d),
             AnyValueKind::Text(t) => SqliteArgumentValue::Text(Arc::new(t.to_string())),
+            AnyValueKind::TextSlice(t) => SqliteArgumentValue::Text(Arc::new(t.to_string())),
             AnyValueKind::Blob(b) => SqliteArgumentValue::Blob(Arc::new(b.to_vec())),
+            #[cfg(feature = "uuid")]
+            AnyValueKind::Uuid(bytes) => SqliteArgumentValue::Blob(Arc::new(bytes.to_vec())),
+            #[cfg(feature = "chrono")]
+            AnyValueKind::TimestampTz(micros) => {
+                let s = chrono::DateTime::<chrono::Utc>::from_timestamp_micros(micros)
+                    .map(|dt| dt.to_rfc3339())
+                    .unwrap_or_default();
+                SqliteArgumentValue::Text(Arc::new(s))
+            }
+            #[cfg(feature = "json")]
+            AnyValueKind::Json(json_str) => SqliteArgumentValue::Text(Arc::new(json_str.to_string())),
             // AnyValueKind is `#[non_exhaustive]` but we should have covered everything
             _ => unreachable!("BUG: missing mapping for {val:?}"),
         })

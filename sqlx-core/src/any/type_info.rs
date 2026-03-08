@@ -27,6 +27,12 @@ pub enum AnyTypeInfoKind {
     Double,
     Text,
     Blob,
+    #[cfg(feature = "uuid")]
+    Uuid,
+    #[cfg(feature = "chrono")]
+    TimestampTz,
+    #[cfg(feature = "json")]
+    Json,
 }
 
 impl TypeInfo for AnyTypeInfo {
@@ -47,6 +53,12 @@ impl TypeInfo for AnyTypeInfo {
             Text => "TEXT",
             Blob => "BLOB",
             Null => "NULL",
+            #[cfg(feature = "uuid")]
+            Uuid => "UUID",
+            #[cfg(feature = "chrono")]
+            TimestampTz => "TIMESTAMPTZ",
+            #[cfg(feature = "json")]
+            Json => "JSON",
         }
     }
 }

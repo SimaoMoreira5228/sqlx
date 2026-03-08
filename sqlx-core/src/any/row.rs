@@ -127,6 +127,12 @@ impl AnyRow {
                 AnyTypeInfoKind::Double => AnyValueKind::Double(decode(value)?),
                 AnyTypeInfoKind::Blob => AnyValueKind::Blob(decode::<_, Vec<u8>>(value)?.into()),
                 AnyTypeInfoKind::Text => AnyValueKind::Text(decode::<_, String>(value)?.into()),
+                #[cfg(feature = "uuid")]
+                AnyTypeInfoKind::Uuid => AnyValueKind::Blob(decode::<_, Vec<u8>>(value)?.into()),
+                #[cfg(feature = "chrono")]
+                AnyTypeInfoKind::TimestampTz => AnyValueKind::Blob(decode::<_, Vec<u8>>(value)?.into()),
+                #[cfg(feature = "json")]
+                AnyTypeInfoKind::Json => AnyValueKind::Blob(decode::<_, Vec<u8>>(value)?.into()),
             };
 
             row_out.columns.push(any_col);
