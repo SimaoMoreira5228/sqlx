@@ -23,6 +23,15 @@ mod float;
 mod int;
 mod str;
 
+#[cfg(feature = "uuid")]
+mod uuid;
+
+#[cfg(feature = "chrono")]
+mod chrono;
+
+#[cfg(feature = "json")]
+mod json;
+
 #[test]
 fn test_type_impls() {
     use crate::any::Any;
@@ -50,4 +59,25 @@ fn test_type_impls() {
     // These imply that there are also impls for the equivalent slice types.
     has_type::<Vec<u8>>();
     has_type::<String>();
+
+    #[cfg(feature = "uuid")]
+    {
+        has_type::<::uuid::Uuid>();
+    }
+
+    #[cfg(feature = "chrono")]
+    {
+        has_type::<::chrono::NaiveDate>();
+        has_type::<::chrono::NaiveTime>();
+        has_type::<::chrono::NaiveDateTime>();
+        has_type::<::chrono::DateTime<::chrono::Utc>>();
+        has_type::<::chrono::DateTime<::chrono::Local>>();
+    }
+
+    #[cfg(feature = "json")]
+    {
+        has_type::<crate::types::Json<::serde_json::Value>>();
+        has_type::<::serde_json::Value>();
+    }
 }
+
