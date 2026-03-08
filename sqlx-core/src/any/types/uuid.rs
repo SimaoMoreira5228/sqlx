@@ -13,12 +13,12 @@ use uuid::{
 impl Type<Any> for Uuid {
     fn type_info() -> AnyTypeInfo {
         AnyTypeInfo {
-            kind: AnyTypeInfoKind::Blob,
+            kind: AnyTypeInfoKind::Text,
         }
     }
 
     fn compatible(ty: &AnyTypeInfo) -> bool {
-        matches!(ty.kind, AnyTypeInfoKind::Blob | AnyTypeInfoKind::Text)
+        matches!(ty.kind, AnyTypeInfoKind::Text | AnyTypeInfoKind::Blob)
     }
 }
 
@@ -27,7 +27,7 @@ impl Encode<'_, Any> for Uuid {
         &self,
         buf: &mut <Any as Database>::ArgumentBuffer,
     ) -> Result<IsNull, BoxDynError> {
-        buf.0.push(AnyValueKind::Blob(Arc::new(self.as_bytes().to_vec())));
+        buf.0.push(AnyValueKind::Text(Arc::new(self.hyphenated().to_string())));
         Ok(IsNull::No)
     }
 }
@@ -35,6 +35,7 @@ impl Encode<'_, Any> for Uuid {
 impl<'r> Decode<'r, Any> for Uuid {
     fn decode(value: <Any as Database>::ValueRef<'r>) -> Result<Self, BoxDynError> {
         match value.kind {
+            AnyValueKind::Text(text) => Uuid::parse_str(text).map_err(Into::into),
             AnyValueKind::Blob(bytes) => {
                 if bytes.len() != 16 {
                     return Err(format!(
@@ -45,7 +46,6 @@ impl<'r> Decode<'r, Any> for Uuid {
                 }
                 Uuid::from_slice(bytes).map_err(Into::into)
             }
-            AnyValueKind::Text(text) => Uuid::parse_str(text).map_err(Into::into),
             other => other.unexpected(),
         }
     }

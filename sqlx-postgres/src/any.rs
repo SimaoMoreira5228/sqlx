@@ -5,7 +5,7 @@ use crate::{
 use futures_core::future::BoxFuture;
 use futures_core::stream::BoxStream;
 use futures_util::{stream, FutureExt, StreamExt, TryFutureExt, TryStreamExt};
-use sqlx_core::sql_str::SqlStr;
+use sqlx_core::sql_str::{AssertSqlSafe, SqlSafeStr, SqlStr};
 use std::{future, pin::pin};
 
 use sqlx_core::any::{
@@ -19,6 +19,36 @@ use sqlx_core::database::Database;
 use sqlx_core::executor::Executor;
 use sqlx_core::ext::ustr::UStr;
 use sqlx_core::transaction::TransactionManager;
+
+fn rewrite_placeholders(sql: &str) -> SqlStr {
+    if !sql.contains('?') {
+        return AssertSqlSafe(sql).into_sql_str();
+    }
+    let mut result = String::with_capacity(sql.len() + 16);
+    let mut param_num = 1usize;
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut chars = sql.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\'' if !in_double => {
+                in_single = !in_single;
+                result.push(ch);
+            }
+            '"' if !in_single => {
+                in_double = !in_double;
+                result.push(ch);
+            }
+            '?' if !in_single && !in_double => {
+                result.push('$');
+                result.push_str(&param_num.to_string());
+                param_num += 1;
+            }
+            _ => result.push(ch),
+        }
+    }
+    AssertSqlSafe(result).into_sql_str()
+}
 
 sqlx_core::declare_driver_with_optional_migrate!(DRIVER = Postgres);
 
@@ -92,6 +122,7 @@ impl AnyConnectionBackend for PgConnection {
             }
         };
 
+        let query = rewrite_placeholders(query.as_str());
         Box::pin(
             self.run(query, arguments, persistent, None)
                 .try_flatten_stream()
@@ -117,6 +148,7 @@ impl AnyConnectionBackend for PgConnection {
             .map_err(sqlx_core::Error::Encode);
 
         Box::pin(async move {
+        let query = rewrite_placeholders(query.as_str());
             let arguments = arguments?;
             let mut stream = pin!(self.run(query, arguments, persistent, None).await?);
 
@@ -133,6 +165,7 @@ impl AnyConnectionBackend for PgConnection {
         sql: SqlStr,
         _parameters: &[AnyTypeInfo],
     ) -> BoxFuture<'c, sqlx_core::Result<AnyStatement>> {
+        let sql = rewrite_placeholders(sql.as_str());
         Box::pin(async move {
             let statement = Executor::prepare_with(self, sql, &[]).await?;
             let column_names = statement.metadata.column_names.clone();
